@@ -15,12 +15,6 @@ library Simulate {
     using SafeCast for uint256;
 
     struct Cache {
-        // price at the beginning of the swap
-        uint160 sqrtPriceX96Start;
-        // tick at the beginning of the swap
-        int24 tickStart;
-        // liquidity at the beginning of the swap
-        uint128 liquidityStart;
         // the lp fee of the pool
         uint24 fee;
         // the tick spacing of the pool
@@ -64,34 +58,39 @@ library Simulate {
         int256 amountSpecified,
         uint160 sqrtPriceLimitX96
     ) internal view returns (int256 amount0, int256 amount1) {
+        State memory state;
+        return simulateSwap(pool, zeroForOne, amountSpecified, sqrtPriceLimitX96, state);
+    }
+
+    function simulateSwap(
+        IUniswapV3Pool pool,
+        bool zeroForOne,
+        int256 amountSpecified,
+        uint160 sqrtPriceLimitX96,
+        State memory state
+    ) internal view returns (int256 amount0, int256 amount1) {
         require(amountSpecified != 0, 'AS');
 
-        (uint160 sqrtPriceX96, int24 tick, , , , , ) = pool.slot0();
+        if (state.sqrtPriceX96 == 0) {
+            (uint160 sqrtPriceX96, int24 tick, , , , , ) = pool.slot0();
+            state.sqrtPriceX96 = sqrtPriceX96;
+            state.tick = tick;
+            state.liquidity = pool.liquidity();
+        }
 
         require(
             zeroForOne
-                ? sqrtPriceLimitX96 < sqrtPriceX96 && sqrtPriceLimitX96 > TickMath.MIN_SQRT_RATIO
-                : sqrtPriceLimitX96 > sqrtPriceX96 && sqrtPriceLimitX96 < TickMath.MAX_SQRT_RATIO,
+                ? sqrtPriceLimitX96 < state.sqrtPriceX96 && sqrtPriceLimitX96 > TickMath.MIN_SQRT_RATIO
+                : sqrtPriceLimitX96 > state.sqrtPriceX96 && sqrtPriceLimitX96 < TickMath.MAX_SQRT_RATIO,
             'SPL'
         );
 
-        Cache memory cache = Cache({
-            sqrtPriceX96Start: sqrtPriceX96,
-            tickStart: tick,
-            liquidityStart: pool.liquidity(),
-            fee: pool.fee(),
-            tickSpacing: pool.tickSpacing()
-        });
+        Cache memory cache = Cache({fee: pool.fee(), tickSpacing: pool.tickSpacing()});
 
         bool exactInput = amountSpecified > 0;
 
-        State memory state = State({
-            amountSpecifiedRemaining: amountSpecified,
-            amountCalculated: 0,
-            sqrtPriceX96: cache.sqrtPriceX96Start,
-            tick: cache.tickStart,
-            liquidity: cache.liquidityStart
-        });
+        state.amountSpecifiedRemaining = amountSpecified;
+        state.amountCalculated = 0;
 
         while (state.amountSpecifiedRemaining != 0 && state.sqrtPriceX96 != sqrtPriceLimitX96) {
             StepComputations memory step;
